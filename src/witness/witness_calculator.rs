@@ -2,8 +2,9 @@ use super::{fnv, CircomBase, SafeMemory, Wasm};
 use color_eyre::Result;
 use num_bigint::BigInt;
 use num_traits::Zero;
-use std::cell::Cell;
+use std::{cell::Cell, ffi::OsStr};
 use wasmer::{imports, Function, Instance, Memory, MemoryType, Module, RuntimeError, Store};
+use wasmer_engine_dylib::Dylib;
 
 #[cfg(feature = "circom-2")]
 use num::ToPrimitive;
@@ -58,15 +59,20 @@ impl WitnessCalculator {
     }
 
     pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        let store = Store::default();
-        let module = Module::from_file(&store, path)?;
-        Self::from_module(module)
+        Self::from_module(match path.as_ref().extension().and_then(OsStr::to_str) {
+            Some("dylib") => unsafe {
+                Module::deserialize_from_file(&Store::new(&Dylib::headless().engine()), path)
+            }?,
+            // treat by default as wasm
+            _ => Module::from_file(&Store::default(), path)?,
+        })
     }
 
     pub fn from_module(module: Module) -> Result<Self> {
         let store = module.store();
 
         // Set up the memory
+        // XXX: This memory allocations fails on a real iOS device due to memory policy
         let memory = Memory::new(store, MemoryType::new(2000, None, false)).unwrap();
         let import_object = imports! {
             "env" => {
